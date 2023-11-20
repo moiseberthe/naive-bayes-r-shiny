@@ -8,10 +8,11 @@
 #
 
 library(shiny)
-library(readxl)
 library(shinydashboard)
 library(bs4Dash)
+library(DT)
 library(NaiveBayes)
+library(readxl)
 
 
 # Define UI for application that draws a histogram
@@ -122,7 +123,7 @@ ui <- fluidPage(
             ),
             box(width = NULL, status = "secondary",
               solidHeader = TRUE, title = "Previsualiser", collapsed = FALSE,
-              dataTableOutput("input_file")
+              DT::dataTableOutput("input_file")
             ),
             box(width = NULL, status = "primary",
               solidHeader = TRUE, title = "Structure", collapsed = TRUE,
@@ -141,7 +142,7 @@ ui <- fluidPage(
               column(8,
                 box(width = NULL, status = "secondary",
                   solidHeader = TRUE,
-                  title = "Previsualiser",
+                  title = "Train/Test split",
                   collapsed = FALSE,
                   sliderInput(
                     "train_size",
@@ -151,17 +152,27 @@ ui <- fluidPage(
                     max = 1,
                     step = 0.05
                   ),
-                  selectInput(
-                    "stratify",
-                    "Stratitier ?",
-                    choices = c("Non" = "no-stratify")
+                  fluidRow(
+                    column(8,
+                      selectInput(
+                        "stratify",
+                        "Stratitier ?",
+                        choices = c("Non" = "no-stratify")
+                      )
+                    ),
+                    column(4,
+                       numericInput(
+                         'seed', 'Set seed',
+                         value = NULL
+                         )
+                     )
                   )
                 ),
               ),
               column(4,
                 box(
                   solidHeader = TRUE,
-                  title = "Status summary",
+                  title = "Récapitulatif du split",
                   background = NULL,
                   width = NULL,
                   status = "secondary",
@@ -222,12 +233,8 @@ ui <- fluidPage(
               ),
               column(4,
                 box(width = NULL, status = "secondary",
-                  solidHeader = TRUE, title = "Métrique",
-                  "Accuracy",
-                  br(),
-                  "Precision",
-                  br(),
-                  "Rappel"
+                  solidHeader = TRUE, title = "Métriques",
+                  tableOutput("metricsOutput")
                 )
               )
             ),
@@ -235,7 +242,35 @@ ui <- fluidPage(
               column(12,
                 box(width = NULL, status = "secondary",
                   solidHeader = TRUE, title = "Prédictions",
-                  "Predictions"
+                  fluidRow(
+                    column(2,
+                      checkboxInput(
+                        inputId = "predict",
+                        label = "Prédire la classe",
+                        value = TRUE,
+                        width = NULL
+                      )
+                    ),
+                    column(3,
+                      checkboxInput(
+                        inputId = "predict_proba",
+                        label = "Prédire les probabilités",
+                        value = FALSE,
+                        width = NULL
+                      )
+                    )
+                  ),
+                  DT::dataTableOutput("predictTable")
+                )
+              ),
+            ),
+            fluidRow(
+              column(12,
+                box(width = NULL, status = "secondary",
+                  solidHeader = TRUE, title = "Sauvegarder le modèle",
+                  "Cliquer sur le bouton ci-dessous pour télécharger le modèle",
+                  br(),
+                  downloadButton("downloadModel", "Télécharger le modèle")
                 )
               ),
             )
@@ -287,17 +322,21 @@ server <- function(input, output) {
       data <- read_excel(datafile$datapath, sheet = sheetname)
     }
 
+    factor_vars <- colnames(Filter(Negate(is.numeric), data))
+    
     updateSelectInput(inputId = "stratify",
       selected = NULL,
-      choices = c("Non" = "no-stratify", colnames(Filter(is.character, data))),
+      choices = c("Non" = "no-stratify", factor_vars),
     )
+    
     updateSelectInput(inputId = "target",
-      choices = colnames(Filter(is.character, data)),
+      choices = factor_vars
     )
+    
     updateSelectInput(inputId = "explanatory",
-      choices = colnames(data),
+      choices = colnames(data)
     )
-    list(data = data, file = datafile)
+    list(data = data)
   })
 
   datasets <- reactive({
@@ -305,10 +344,13 @@ server <- function(input, output) {
       return()
     }
     stratify <- if (input$stratify == "no-stratify") NULL else input$stratify
+    seed <- if (is.na(input$seed)) NULL else input$seed
+    
     train_test <- train_test_split(
       datafile()$data,
       train_size = input$train_size,
-      stratify = stratify
+      stratify = stratify,
+      seed = seed
     )
     return(list(
       Xtrain = train_test$train_set[input$explanatory],
@@ -319,14 +361,27 @@ server <- function(input, output) {
   })
 
   model <- reactive({
+    if(length(intersect(input$explanatory, input$target)) > 0) {
+      stop("Error")
+    }
     naive_bayes_cls <- naive_bayes$new()
-    naive_bayes_cls$fit(datasets()$Xtrain, datasets()$ytrain)
-    return(list(model = naive_bayes_cls))
+    ypred <- NULL
+    yproba <- NULL
+    if (length(input$explanatory) >= 2) {
+      naive_bayes_cls$fit(datasets()$Xtrain, datasets()$ytrain)
+      ypred <- naive_bayes_cls$predict(datasets()$Xtest)
+      yproba <- naive_bayes_cls$predict_proba(datasets()$Xtest)
+      yproba <- round(yproba, 2)
+    }
+    return(list(model = naive_bayes_cls, ypred = ypred, yproba = yproba))
   })
 
-  output$input_file <- renderDataTable({
+  output$input_file <- DT::renderDataTable({
     head(datafile()$data)
-  })
+  }, options = list(
+    searching = FALSE,
+    paging = FALSE
+  ))
 
   output$structure <- renderPrint({
     str(datafile()$data)
@@ -357,8 +412,47 @@ server <- function(input, output) {
   })
 
   output$predictionOutput <- renderPrint({
-    table(model()$model$predict(datasets()$Xtest), datasets()$ytest)
+    metrics$confusion_matrix(datasets()$ytest, model()$ypred)
   })
+
+  output$metricsOutput <- renderTable({
+    c(
+      "Accuracy" = metrics$accuracy_score(datasets()$ytest, model()$ypred),
+      "Rappel" = mean(
+        metrics$recall_score(datasets()$ytest, model()$ypred)
+      ),
+      "Precision" = mean(
+        metrics$precision_score(datasets()$ytest, model()$ypred)
+      )
+    )
+  }, colnames = FALSE, rownames = TRUE)
+
+  output$predictTable <- DT::renderDataTable({
+    data <- cbind(datasets()$Xtest, ytrue = datasets()$ytest)
+    if (input$predict) {
+      data <- cbind(data, ypred = model()$ypred)
+    }
+    if (input$predict_proba) {
+      data <- cbind(data, yproba = model()$yproba)
+    }
+    return(data)
+  },
+  options = list(
+    searching = FALSE,
+    scrollCollapse = TRUE,
+    scrollY = "400px",
+    footer = TRUE
+  ))
+
+  output$downloadModel <- downloadHandler(
+    filename = function() {
+      "naive_bayes_classifier.rds"
+    },
+    content = function(file) {
+      model <- model()$model
+      saveRDS(model, file)
+    }
+  )
 }
 
 # Run the application
