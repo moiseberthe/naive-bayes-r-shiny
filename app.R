@@ -140,71 +140,97 @@ ui <- fluidPage(
           ),
           bs4TabItem(
             tabName = "train",
-            fluidRow(
-              column(8,
-                box(width = NULL, status = "primary",
-                  solidHeader = TRUE,
-                  title = "Train/Test split",
-                  collapsed = FALSE,
-                  sliderInput(
-                    "train_size",
-                    label = "Training size",
-                    value = 0.7,
-                    min = 0.5,
-                    max = 1,
-                    step = 0.05
+            conditionalPanel(
+              condition = "input.cbEnableSplit == 'enable'",
+              fluidRow(
+                column(8,
+                  box(width = NULL, status = "primary",
+                    solidHeader = TRUE,
+                    title = "Train/Test split",
+                    collapsed = FALSE,
+                    sliderInput(
+                      "train_size",
+                      label = "Training size",
+                      value = 0.7,
+                      min = 0.5,
+                      max = 1,
+                      step = 0.05
+                    ),
+                    fluidRow(
+                      column(8,
+                        selectInput(
+                          "stratify",
+                          "Stratify ?",
+                          choices = c("Non" = "no-stratify")
+                        )
+                      ),
+                      column(4,
+                         numericInput(
+                           'seed', 'Set seed',
+                           value = NULL
+                           )
+                       )
+                    )
                   ),
-                  fluidRow(
-                    column(8,
-                      selectInput(
-                        "stratify",
-                        "Stratify ?",
-                        choices = c("Non" = "no-stratify")
-                      )
-                    ),
-                    column(4,
-                       numericInput(
-                         'seed', 'Set seed',
-                         value = NULL
-                         )
-                     )
-                  )
                 ),
-              ),
-              column(4,
-                box(
-                  solidHeader = TRUE,
-                  title = "Split statistics",
-                  background = NULL,
-                  width = NULL,
-                  status = "secondary",
-                  fluidRow(
-                    column(
-                      width = 6,
-                      descriptionBlock(
-                        number = textOutput("percent_train"),
-                        numberColor = "secondary",
-                        header = textOutput("nb_train"),
-                        text = "TRAINING SET",
-                        rightBorder = FALSE,
-                        marginBottom = FALSE
-                      )
-                    ),
-                    column(
-                      width = 6,
-                      descriptionBlock(
-                        number = textOutput("percent_test"),
-                        numberColor = "secondary",
-                        header = textOutput("nb_test"),
-                        text = "TESTING SET",
-                        rightBorder = FALSE,
-                        marginBottom = FALSE
+                column(4,
+                  box(
+                    solidHeader = TRUE,
+                    title = "Split statistics",
+                    background = NULL,
+                    width = NULL,
+                    status = "secondary",
+                    fluidRow(
+                      column(
+                        width = 6,
+                        descriptionBlock(
+                          number = textOutput("percent_train"),
+                          numberColor = "secondary",
+                          header = textOutput("nb_train"),
+                          text = "TRAINING SET",
+                          rightBorder = FALSE,
+                          marginBottom = FALSE
+                        )
+                      ),
+                      column(
+                        width = 6,
+                        descriptionBlock(
+                          number = textOutput("percent_test"),
+                          numberColor = "secondary",
+                          header = textOutput("nb_test"),
+                          text = "TESTING SET",
+                          rightBorder = FALSE,
+                          marginBottom = FALSE
+                        )
                       )
                     )
-                  )
+                  ),
                 ),
               ),
             ),
+          conditionalPanel(
+            condition = "input.cbEnableSplit=='disable'",
+              fluidRow(
+                column(8,
+                       box(width = NULL, status = "primary",
+                           solidHeader = TRUE,
+                           title = "Load testing data",
+                           collapsed = FALSE,
+                           fluidRow(
+                             fileInput("X_test_input", "Upload data", multiple = FALSE,
+                                       accept = c("text/csv",
+                                                  "text/comma-separated-values,text/plain",
+                                                  ".csv",
+                                                  ".xls",
+                                                  ".xlsx"),
+                                       placeholder = "Choose a file",
+                             )
+                           )
+                       ),
+                )
+              )
+            ),
+            # conditional
             box(width = NULL, status = "gray",
               solidHeader = TRUE, title = "Configure model",
               fluidRow(
@@ -331,10 +357,6 @@ server <- function(input, output) {
       sheetname <- if (input$sheetname != "") input$sheetname else 1
       data <- read_excel(datafile$datapath, sheet = sheetname)
     }
-    if("index" %in% colnames(data)){
-      stop("Cannot have column index in the dataframe")
-    }
-    data$index = 1:nrow(data)
 
     factor_vars <- colnames(Filter(Negate(is.numeric), data))
     
@@ -352,7 +374,34 @@ server <- function(input, output) {
     )
     list(data = data)
   })
-
+  
+  X_test <- reactive({
+    datafile <- input$X_test_input
+    if (is.null(datafile)) {
+      return()
+    }
+    file_extension <- tail(strsplit(datafile$datapath, "\\.")[[1]], 1)
+    if (file_extension %in% c("csv", "txt", "tsv")) {
+      output$fileformat <- renderText("csvtxt")
+      outputOptions(output, "fileformat", suspendWhenHidden = FALSE)
+      quote <- strtrim(input$quote, 1)
+      data <- read.delim(
+        datafile$datapath,
+        header = as.logical(input$header),
+        sep = input$sep,
+        quote = quote,
+        dec = input$dec
+      )
+    } else {
+      output$fileformat <- renderText("xlsx")
+      outputOptions(output, "fileformat", suspendWhenHidden = FALSE)
+      sheetname <- if (input$sheetname != "") input$sheetname else 1
+      data <- read_excel(datafile$datapath, sheet = sheetname)
+    }
+    
+    list(data = data)
+  })
+  
   datasets <- reactive({
     if (is.null(datafile()$data)) {
       return()
@@ -360,12 +409,19 @@ server <- function(input, output) {
     stratify <- if (input$stratify == "no-stratify") NULL else input$stratify
     seed <- if (is.na(input$seed)) NULL else input$seed
     
-    train_test <- train_test_split(
-      datafile()$data,
-      train_size = input$train_size,
-      stratify = stratify,
-      seed = seed
-    )
+    if(input$cbEnableSplit=="enable"){
+      train_test <- train_test_split(
+        datafile()$data,
+        train_size = input$train_size,
+        stratify = stratify,
+        seed = seed
+      )
+    } else {
+      train_test <- list(
+        train_set = datafile()$data,
+        test_set = X_test()$data
+      )
+    }
     return(list(
       Xtrain = train_test$train_set[input$explanatory],
       ytrain = train_test$train_set[[input$target]],
