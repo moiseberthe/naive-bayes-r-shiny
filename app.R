@@ -285,7 +285,7 @@ ui <- fluidPage(
                 selectInput("cbEnableSplit","Enable data split",choices=c("Enable"="enable","Input my own test data to predict"="disable"))
               ),
               column(12,
-                selectInput("cbEnableSuggestion","Enable explainatory variables suggestion",choices=c("Enable (can slow down performance)"="enable","Disable"="disable"))
+                selectInput("cbEnableSuggestion","Enable explainatory variables suggestions",choices=c("Enable (can slow down performance)"="enable","Disable"="disable"))
               )
             )
           )
@@ -465,7 +465,7 @@ server <- function(input, output) {
     if (input$predict_proba) {
       data <- cbind(data, yproba = model()$yproba)
     }
-    return(datatable(cbind(datasets()$Xtest, ytrue = datasets()$ytest,ypred = model()$ypred, yproba = model()$yproba),selection = 'single'))
+    return(datatable(data,selection = 'single'))
   },
   options = list(
     searching = FALSE,
