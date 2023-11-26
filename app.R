@@ -8,11 +8,12 @@
 #
 
 library(shiny)
-library(readxl)
 library(shinydashboard)
 library(bs4Dash)
+library(DT)
 library(NaiveBayes)
-
+library(readxl)
+library(plotly)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -39,24 +40,24 @@ ui <- fluidPage(
         bs4SidebarMenu(
           id = "current_tab",
           bs4SidebarMenuItem(
-            "Données",
+            "Data",
             tabName = "welcome",
             icon = icon("table")
           ),
           bs4SidebarMenuItem(
-            "Entrainer un modèle",
+            "Train a model",
             tabName = "train",
             icon = icon("palette")
           ),
           bs4SidebarMenuItem(
-            "Prédiction",
+            "Prediction",
             tabName = "prediction",
             icon = icon("book-open")
           ),
           bs4SidebarMenuItem(
-            "Feedback",
-            tabName = "feedback",
-            icon = icon("envelope")
+            "Settings",
+            tabName = "settings",
+            icon = icon("gear")
           )
         )
       ),
@@ -67,14 +68,14 @@ ui <- fluidPage(
           bs4TabItem(
             tabName = "welcome",
             box(width = NULL, status = "gray",
-              solidHeader = TRUE, title = "Charger",
-              fileInput("datafile", "Choisir un fichier", multiple = FALSE,
+              solidHeader = TRUE, title = "Load",
+              fileInput("datafile", "Upload data", multiple = FALSE,
                 accept = c("text/csv",
                            "text/comma-separated-values,text/plain",
                            ".csv",
                            ".xls",
                            ".xlsx"),
-                placeholder = "Choisissez un fichier",
+                placeholder = "Choose a file",
               ),
 
               conditionalPanel(
@@ -91,116 +92,170 @@ ui <- fluidPage(
                 condition = "output.fileformat == 'csvtxt'",
                 fluidRow(
                   column(3,
-                    selectInput("header", "En-tête ?",
-                      choices = c(Oui = TRUE, Non = FALSE)
+                    selectInput("header", "Headers ?",
+                      choices = c(Yes = TRUE, No = FALSE)
                     )
                   ),
                   column(3,
-                    selectInput("sep", "Séparateur",
-                      choices = c("Virgule" = ",",
-                        "Point Virgule" = ";",
+                    selectInput("sep", "Separator",
+                      choices = c("Comma" = ",",
+                        "Semicolon" = ";",
                         "Tabulation" = "\t",
                         "Pipe" = "|"
                       )
                     )
                   ),
                   column(3,
-                    selectInput("quote", "Délimiteur de texte",
+                    selectInput("quote", "String separator",
                       choices = c("Pas de séparateur" = " ",
-                        "Simple quote" = "'",
+                        "Single quote" = "'",
                         "Double quote" = "\""
                       )
                     )
                   ),
                   column(3,
-                    selectInput("dec", "Séparateur décimal",
-                      choices = c("Point" = ".", "Virgule" = ",")
+                    selectInput("dec", "Decimal separator",
+                      choices = c("Dot" = ".", "Comma" = ",")
                     )
                   ),
                 ),
               )
             ),
-            box(width = NULL, status = "secondary",
-              solidHeader = TRUE, title = "Previsualiser", collapsed = FALSE,
-              dataTableOutput("input_file")
+            box(width = NULL, status = "primary",
+              solidHeader = TRUE, title = "Preview", collapsed = FALSE,
+              DT::dataTableOutput("input_file")
             ),
             box(width = NULL, status = "primary",
-              solidHeader = TRUE, title = "Structure", collapsed = TRUE,
-              verbatimTextOutput("structure")
+              solidHeader = TRUE, title = "Structure", collapsed = FALSE,
+              verbatimTextOutput("structure"),
+              plotlyOutput("varTypesBar")
             ),
             box(width = NULL, status = "primary",
               solidHeader = TRUE,
-              title = "Statistiques descriptives",
+              title = "Statistics",
               collapsed = TRUE,
               verbatimTextOutput("summary")
             )
           ),
           bs4TabItem(
             tabName = "train",
-            fluidRow(
-              column(8,
-                box(width = NULL, status = "secondary",
-                  solidHeader = TRUE,
-                  title = "Previsualiser",
-                  collapsed = FALSE,
-                  sliderInput(
-                    "train_size",
-                    label = "Taille de l'échantillon d'apprentissage",
-                    value = 0.7,
-                    min = 0.5,
-                    max = 1,
-                    step = 0.05
-                  ),
-                  selectInput(
-                    "stratify",
-                    "Stratitier ?",
-                    choices = c("Non" = "no-stratify")
-                  )
-                ),
-              ),
-              column(4,
-                box(
-                  solidHeader = TRUE,
-                  title = "Status summary",
-                  background = NULL,
-                  width = NULL,
-                  status = "secondary",
-                  fluidRow(
-                    column(
-                      width = 6,
-                      descriptionBlock(
-                        number = textOutput("percent_train"),
-                        numberColor = "secondary",
-                        header = textOutput("nb_train"),
-                        text = "TEST SET",
-                        rightBorder = FALSE,
-                        marginBottom = FALSE
-                      )
+            conditionalPanel(
+              condition = "input.cbEnableSplit == 'enable'",
+              fluidRow(
+                column(8,
+                  box(width = NULL, status = "primary",
+                    solidHeader = TRUE,
+                    title = "Train/Test split",
+                    collapsed = FALSE,
+                    sliderInput(
+                      "train_size",
+                      label = "Training size",
+                      value = 0.7,
+                      min = 0.5,
+                      max = 1,
+                      step = 0.05
                     ),
-                    column(
-                      width = 6,
-                      descriptionBlock(
-                        number = textOutput("percent_test"),
-                        numberColor = "secondary",
-                        header = textOutput("nb_test"),
-                        text = "TEST SET",
-                        rightBorder = FALSE,
-                        marginBottom = FALSE
+                    fluidRow(
+                      column(8,
+                        selectInput(
+                          "stratify",
+                          "Stratify ?",
+                          choices = c("Non" = "no-stratify")
+                        )
+                      ),
+                      column(4,
+                        numericInput(
+                          "seed", "Set seed",
+                          value = NULL
+                        )
                       )
                     )
-                  )
+                  ),
+                ),
+                column(4,
+                  box(
+                    solidHeader = TRUE,
+                    title = "Split statistics",
+                    background = NULL,
+                    width = NULL,
+                    status = "secondary",
+                    fluidRow(
+                      column(
+                        width = 6,
+                        descriptionBlock(
+                          number = textOutput("percent_train"),
+                          numberColor = "secondary",
+                          header = textOutput("nb_train"),
+                          text = "TRAINING SET",
+                          rightBorder = FALSE,
+                          marginBottom = FALSE
+                        )
+                      ),
+                      column(
+                        width = 6,
+                        descriptionBlock(
+                          number = textOutput("percent_test"),
+                          numberColor = "secondary",
+                          header = textOutput("nb_test"),
+                          text = "TESTING SET",
+                          rightBorder = FALSE,
+                          marginBottom = FALSE
+                        )
+                      )
+                    )
+                  ),
                 ),
               ),
             ),
+            conditionalPanel(
+              condition = "input.cbEnableSplit=='disable'",
+              fluidRow(
+                column(12,
+                  box(width = NULL, status = "primary",
+                    solidHeader = TRUE,
+                    title = "Load testing data",
+                    collapsed = FALSE,
+                    fluidRow(
+                      fileInput(
+                        inputId = "X_test_input",
+                        label = "Upload data",
+                        multiple = FALSE,
+                        accept = c(
+                          "text/csv",
+                          "text/comma-separated-values,text/plain",
+                          ".csv",
+                          ".xls",
+                          ".xlsx"
+                        ),
+                        placeholder = "Choose a file",
+                      )
+                    )
+                  ),
+                )
+              )
+            ),
+            # conditional
             box(width = NULL, status = "gray",
-              solidHeader = TRUE, title = "Paramétrer le modèle",
+              solidHeader = TRUE, title = "Configure model",
               fluidRow(
                 column(6,
-                  selectInput("target", "Variable cible", choices = c())
+                  selectInput("target", "Target variable", choices = c()),
+                  checkboxInput(
+                    inputId = "parallelize",
+                    label = "Parallelize training ?",
+                    value = FALSE,
+                    width = NULL
+                  ),
+                  selectInput(
+                    inputId = "nb_cluster",
+                    label = "Number of CPU",
+                    choices = c(2, 3, 4),
+                    width = NULL
+                  )
                 ),
                 column(6,
                   selectInput("explanatory",
-                    "Variables explicatives",
+                    "Explainatory variables",
                     choices = c(),
                     multiple = TRUE
                   ),
@@ -216,33 +271,82 @@ ui <- fluidPage(
                 box(width = NULL,
                   status = "secondary",
                   solidHeader = TRUE,
-                  title = "Matrice de confusion",
+                  title = "Confusion matrix",
                   verbatimTextOutput("predictionOutput")
                 )
               ),
               column(4,
                 box(width = NULL, status = "secondary",
-                  solidHeader = TRUE, title = "Métrique",
-                  "Accuracy",
-                  br(),
-                  "Precision",
-                  br(),
-                  "Rappel"
+                  solidHeader = TRUE, title = "Metrics",
+                  tableOutput("metricsOutput")
                 )
               )
             ),
             fluidRow(
               column(12,
                 box(width = NULL, status = "secondary",
-                  solidHeader = TRUE, title = "Prédictions",
-                  "Predictions"
+                  solidHeader = TRUE, title = "Predictions",
+                  fluidRow(
+                    column(2,
+                      checkboxInput(
+                        inputId = "predict",
+                        label = "Display predicted class",
+                        value = TRUE,
+                        width = NULL
+                      )
+                    ),
+                    column(3,
+                      checkboxInput(
+                        inputId = "predict_proba",
+                        label = "Display class probabilities",
+                        value = FALSE,
+                        width = NULL
+                      )
+                    )
+                  ),
+                  DT::dataTableOutput("predictTable"),
+                  conditionalPanel(
+                    condition = "output.clicked_row == 'TRUE'",
+                    plotlyOutput("predictedProbasHist")
+                  )
+                )
+              ),
+            ),
+            fluidRow(
+              column(12,
+                box(width = NULL, status = "secondary",
+                  solidHeader = TRUE, title = "Export model",
+                  "Click on the button to save the current model",
+                  br(),
+                  downloadButton("downloadModel", "Download model")
                 )
               ),
             )
           ),
           bs4TabItem(
-            tabName = "feedback",
-            "feedback_ui_1"
+            tabName = "settings",
+            fluidRow(
+              column(12,
+                selectInput(
+                  "cbEnableSplit",
+                  "Enable data split",
+                  choices = c(
+                    "Enable" = "enable",
+                    "Input my own test data to predict" = "disable"
+                  )
+                )
+              )
+              # column(12,
+              #   selectInput(
+              #     "cbEnableSuggestion",
+              #     "Enable explainatory variables suggestions",
+              #     choices = c(
+              #       "Enable (can slow down performance)" = "enable",
+              #       "Disable" = "disable"
+              #     )
+              #   )
+              # )
+            )
           )
         )
       ),
@@ -287,17 +391,48 @@ server <- function(input, output) {
       data <- read_excel(datafile$datapath, sheet = sheetname)
     }
 
+    cols <- colnames(data)
+
     updateSelectInput(inputId = "stratify",
       selected = NULL,
-      choices = c("Non" = "no-stratify", colnames(Filter(is.character, data))),
+      choices = c("Non" = "no-stratify", cols),
     )
+
     updateSelectInput(inputId = "target",
-      choices = colnames(Filter(is.character, data)),
+      choices = cols
     )
+
     updateSelectInput(inputId = "explanatory",
-      choices = colnames(data),
+      choices = cols
     )
-    list(data = data, file = datafile)
+    list(data = data)
+  })
+
+  test_file <- reactive({
+    datafile <- input$X_test_input
+    if (is.null(datafile)) {
+      return()
+    }
+    file_extension <- tail(strsplit(datafile$datapath, "\\.")[[1]], 1)
+    if (file_extension %in% c("csv", "txt", "tsv")) {
+      output$fileformat <- renderText("csvtxt")
+      outputOptions(output, "fileformat", suspendWhenHidden = FALSE)
+      quote <- strtrim(input$quote, 1)
+      data <- read.delim(
+        datafile$datapath,
+        header = as.logical(input$header),
+        sep = input$sep,
+        quote = quote,
+        dec = input$dec
+      )
+    } else {
+      output$fileformat <- renderText("xlsx")
+      outputOptions(output, "fileformat", suspendWhenHidden = FALSE)
+      sheetname <- if (input$sheetname != "") input$sheetname else 1
+      data <- read_excel(datafile$datapath, sheet = sheetname)
+    }
+
+    list(data = data)
   })
 
   datasets <- reactive({
@@ -305,11 +440,21 @@ server <- function(input, output) {
       return()
     }
     stratify <- if (input$stratify == "no-stratify") NULL else input$stratify
-    train_test <- train_test_split(
-      datafile()$data,
-      train_size = input$train_size,
-      stratify = stratify
-    )
+    seed <- if (is.na(input$seed)) NULL else input$seed
+
+    if (input$cbEnableSplit == "enable") {
+      train_test <- train_test_split(
+        datafile()$data,
+        train_size = input$train_size,
+        stratify = stratify,
+        seed = seed
+      )
+    } else {
+      train_test <- list(
+        train_set = datafile()$data,
+        test_set = test_file()$data
+      )
+    }
     return(list(
       Xtrain = train_test$train_set[input$explanatory],
       ytrain = train_test$train_set[[input$target]],
@@ -319,17 +464,55 @@ server <- function(input, output) {
   })
 
   model <- reactive({
-    naive_bayes_cls <- naive_bayes$new()
-    naive_bayes_cls$fit(datasets()$Xtrain, datasets()$ytrain)
-    return(list(model = naive_bayes_cls))
+    if (length(intersect(input$explanatory, input$target)) > 0) {
+      stop("Cannot have target variable as explainatory variable")
+    }
+    n_cluster <- if (input$parallelize) input$nb_cluster else NULL
+    naive_bayes_cls <- naive_bayes$new(
+      multi_thread = input$parallelize,
+      n_cluster = n_cluster
+    )
+    ypred <- NULL
+    yproba <- NULL
+    if (length(input$explanatory) >= 2) {
+      naive_bayes_cls$fit(datasets()$Xtrain, as.factor(datasets()$ytrain))
+      ypred <- naive_bayes_cls$predict(datasets()$Xtest)
+      yproba <- naive_bayes_cls$predict_proba(datasets()$Xtest)
+      yproba <- round(yproba, 2)
+    }
+    return(list(model = naive_bayes_cls, ypred = ypred, yproba = yproba))
   })
 
-  output$input_file <- renderDataTable({
+  output$input_file <- DT::renderDataTable({
     head(datafile()$data)
-  })
+  }, options = list(
+    searching = FALSE,
+    paging = FALSE
+  ))
 
   output$structure <- renderPrint({
-    str(datafile()$data)
+    data <- datafile()$data
+    if (!is.null(data)) {
+      str(data)
+      cols <- colnames(data)
+      continous <- names(Filter(is.numeric, data))
+      discrete <- setdiff(cols, continous)
+
+      output$varTypesBar <- renderPlotly(({
+        plot <- plot_ly(
+          x = c("Discrete", "Continous"),
+          y = c(length(discrete), length(continous)),
+          type = "bar",
+          name = "Values"
+        )
+        plot <- layout(
+          plot,
+          title = "Distribution of imported variables by type",
+          xaxis = list(title = "Number of variables"),
+          yaxis = list(title = "Type")
+        )
+      }))
+    }
   })
 
   output$summary <- renderPrint({
@@ -353,11 +536,69 @@ server <- function(input, output) {
   })
 
   output$explainOut <- renderPrint({
-    model()$model
+    model()$model$summary()
   })
 
   output$predictionOutput <- renderPrint({
-    table(model()$model$predict(datasets()$Xtest), datasets()$ytest)
+    metrics$confusion_matrix(datasets()$ytest, model()$ypred)
+  })
+
+  output$metricsOutput <- renderTable({
+    c(
+      "Accuracy" = metrics$accuracy_score(datasets()$ytest, model()$ypred),
+      "Rappel" = metrics$recall_score(datasets()$ytest, model()$ypred),
+      "Precision" = metrics$precision_score(datasets()$ytest, model()$ypred)
+    )
+  }, colnames = FALSE, rownames = TRUE)
+
+  output$predictTable <- DT::renderDataTable({
+    data <- cbind(datasets()$Xtest, ytrue = datasets()$ytest)
+    if (input$predict) {
+      data <- cbind(data, ypred = model()$ypred)
+    }
+    if (input$predict_proba) {
+      data <- cbind(data, yproba = model()$yproba)
+    }
+    return(datatable(data, selection = "single", options = list(
+      searching = FALSE,
+      scrollCollapse = TRUE,
+      scrollY = "300px",
+      footer = TRUE
+    )))
+  })
+
+  output$downloadModel <- downloadHandler(
+    filename = function() {
+      "naive_bayes_classifier.rds"
+    },
+    content = function(file) {
+      model <- model()$model
+      saveRDS(model, file)
+    }
+  )
+  # Display clicked row information
+  observeEvent(input$predictTable_rows_selected, {
+
+    selected_row_index <- input$predictTable_rows_selected
+
+    output$clicked_row <- renderText("FALSE")
+    outputOptions(output, "clicked_row", suspendWhenHidden = FALSE)
+
+    if (length(selected_row_index) > 0) {
+      output$clicked_row <- renderText("TRUE")
+      outputOptions(output, "clicked_row", suspendWhenHidden = FALSE)
+
+      output$predictedProbasHist <- renderPlotly({
+        probas <- model()$yproba[selected_row_index, ]
+        plot <- plot_ly(x = names(probas), y = unname(probas), type = "bar")
+        plot <- layout(plot,
+          title = "Distribution of class probas",
+          xaxis = list(title = "Class"),
+          yaxis = list(title = "probas")
+        )
+        return(plot)
+      })
+    }
   })
 }
 
