@@ -53,8 +53,7 @@ ui <- fluidPage(
             "Prediction",
             tabName = "prediction",
             icon = icon("book-open")
-          )
-          ,
+          ),
           bs4SidebarMenuItem(
             "Settings",
             tabName = "settings",
@@ -165,11 +164,11 @@ ui <- fluidPage(
                         )
                       ),
                       column(4,
-                         numericInput(
-                           'seed', 'Set seed',
-                           value = NULL
-                           )
-                       )
+                        numericInput(
+                          "seed", "Set seed",
+                          value = NULL
+                        )
+                      )
                     )
                   ),
                 ),
@@ -208,25 +207,30 @@ ui <- fluidPage(
                 ),
               ),
             ),
-          conditionalPanel(
-            condition = "input.cbEnableSplit=='disable'",
+            conditionalPanel(
+              condition = "input.cbEnableSplit=='disable'",
               fluidRow(
-                column(8,
-                       box(width = NULL, status = "primary",
-                           solidHeader = TRUE,
-                           title = "Load testing data",
-                           collapsed = FALSE,
-                           fluidRow(
-                             fileInput("X_test_input", "Upload data", multiple = FALSE,
-                                       accept = c("text/csv",
-                                                  "text/comma-separated-values,text/plain",
-                                                  ".csv",
-                                                  ".xls",
-                                                  ".xlsx"),
-                                       placeholder = "Choose a file",
-                             )
-                           )
-                       ),
+                column(12,
+                  box(width = NULL, status = "primary",
+                    solidHeader = TRUE,
+                    title = "Load testing data",
+                    collapsed = FALSE,
+                    fluidRow(
+                      fileInput(
+                        inputId = "X_test_input",
+                        label = "Upload data",
+                        multiple = FALSE,
+                        accept = c(
+                          "text/csv",
+                          "text/comma-separated-values,text/plain",
+                          ".csv",
+                          ".xls",
+                          ".xlsx"
+                        ),
+                        placeholder = "Choose a file",
+                      )
+                    )
+                  ),
                 )
               )
             ),
@@ -235,7 +239,19 @@ ui <- fluidPage(
               solidHeader = TRUE, title = "Configure model",
               fluidRow(
                 column(6,
-                  selectInput("target", "Target variable", choices = c())
+                  selectInput("target", "Target variable", choices = c()),
+                  checkboxInput(
+                    inputId = "parallelize",
+                    label = "Parallelize training ?",
+                    value = FALSE,
+                    width = NULL
+                  ),
+                  selectInput(
+                    inputId = "nb_cluster",
+                    label = "Number of CPU",
+                    choices = c(2, 3, 4),
+                    width = NULL
+                  )
                 ),
                 column(6,
                   selectInput("explanatory",
@@ -288,8 +304,11 @@ ui <- fluidPage(
                       )
                     )
                   ),
-                  plotlyOutput("predictedProbasHist"),
-                  DT::dataTableOutput("predictTable")
+                  DT::dataTableOutput("predictTable"),
+                  conditionalPanel(
+                    condition = "output.clicked_row == 'TRUE'",
+                    plotlyOutput("predictedProbasHist")
+                  )
                 )
               ),
             ),
@@ -308,11 +327,25 @@ ui <- fluidPage(
             tabName = "settings",
             fluidRow(
               column(12,
-                selectInput("cbEnableSplit","Enable data split",choices=c("Enable"="enable","Input my own test data to predict"="disable"))
-              ),
-              column(12,
-                selectInput("cbEnableSuggestion","Enable explainatory variables suggestions",choices=c("Enable (can slow down performance)"="enable","Disable"="disable"))
+                selectInput(
+                  "cbEnableSplit",
+                  "Enable data split",
+                  choices = c(
+                    "Enable" = "enable",
+                    "Input my own test data to predict" = "disable"
+                  )
+                )
               )
+              # column(12,
+              #   selectInput(
+              #     "cbEnableSuggestion",
+              #     "Enable explainatory variables suggestions",
+              #     choices = c(
+              #       "Enable (can slow down performance)" = "enable",
+              #       "Disable" = "disable"
+              #     )
+              #   )
+              # )
             )
           )
         )
@@ -358,24 +391,24 @@ server <- function(input, output) {
       data <- read_excel(datafile$datapath, sheet = sheetname)
     }
 
-    factor_vars <- colnames(Filter(Negate(is.numeric), data))
-    
+    cols <- colnames(data)
+
     updateSelectInput(inputId = "stratify",
       selected = NULL,
-      choices = c("Non" = "no-stratify", factor_vars),
+      choices = c("Non" = "no-stratify", cols),
     )
-    
+
     updateSelectInput(inputId = "target",
-      choices = factor_vars
+      choices = cols
     )
-    
+
     updateSelectInput(inputId = "explanatory",
-      choices = colnames(data)
+      choices = cols
     )
     list(data = data)
   })
-  
-  X_test <- reactive({
+
+  test_file <- reactive({
     datafile <- input$X_test_input
     if (is.null(datafile)) {
       return()
@@ -398,18 +431,18 @@ server <- function(input, output) {
       sheetname <- if (input$sheetname != "") input$sheetname else 1
       data <- read_excel(datafile$datapath, sheet = sheetname)
     }
-    
+
     list(data = data)
   })
-  
+
   datasets <- reactive({
     if (is.null(datafile()$data)) {
       return()
     }
     stratify <- if (input$stratify == "no-stratify") NULL else input$stratify
     seed <- if (is.na(input$seed)) NULL else input$seed
-    
-    if(input$cbEnableSplit=="enable"){
+
+    if (input$cbEnableSplit == "enable") {
       train_test <- train_test_split(
         datafile()$data,
         train_size = input$train_size,
@@ -419,7 +452,7 @@ server <- function(input, output) {
     } else {
       train_test <- list(
         train_set = datafile()$data,
-        test_set = X_test()$data
+        test_set = test_file()$data
       )
     }
     return(list(
@@ -431,10 +464,14 @@ server <- function(input, output) {
   })
 
   model <- reactive({
-    if(length(intersect(input$explanatory, input$target)) > 0) {
+    if (length(intersect(input$explanatory, input$target)) > 0) {
       stop("Cannot have target variable as explainatory variable")
     }
-    naive_bayes_cls <- naive_bayes$new()
+    n_cluster <- if (input$parallelize) input$nb_cluster else NULL
+    naive_bayes_cls <- naive_bayes$new(
+      multi_thread = input$parallelize,
+      n_cluster = n_cluster
+    )
     ypred <- NULL
     yproba <- NULL
     if (length(input$explanatory) >= 2) {
@@ -454,20 +491,25 @@ server <- function(input, output) {
   ))
 
   output$structure <- renderPrint({
-    data = datafile()$data
-    if(!is.null(data)){
+    data <- datafile()$data
+    if (!is.null(data)) {
       str(data)
-      dfDataTypes = data.frame(
-        Discrete = length(which(sapply(data, function(x){is.factor(x) || is.character(x)}))),
-        Continuous= length(which(sapply(data, function(x){is.numeric(x)})))
-      )
+      cols <- colnames(data)
+      continous <- names(Filter(is.numeric, data))
+      discrete <- setdiff(cols, continous)
+
       output$varTypesBar <- renderPlotly(({
-        plot = plot_ly(dfDataTypes, x = colnames(dfDataTypes), y = unname(dfDataTypes), type = 'bar', name = 'Values')
-        plot = layout(
+        plot <- plot_ly(
+          x = c("Discrete", "Continous"),
+          y = c(length(discrete), length(continous)),
+          type = "bar",
+          name = "Values"
+        )
+        plot <- layout(
           plot,
-          title= "Distribution of imported variables by type",
-          xaxis = list(title="Number of variables"),
-          yaxis = list(title="Type")
+          title = "Distribution of imported variables by type",
+          xaxis = list(title = "Number of variables"),
+          yaxis = list(title = "Type")
         )
       }))
     }
@@ -504,12 +546,8 @@ server <- function(input, output) {
   output$metricsOutput <- renderTable({
     c(
       "Accuracy" = metrics$accuracy_score(datasets()$ytest, model()$ypred),
-      "Rappel" = mean(
-        metrics$recall_score(datasets()$ytest, model()$ypred)
-      ),
-      "Precision" = mean(
-        metrics$precision_score(datasets()$ytest, model()$ypred)
-      )
+      "Rappel" = metrics$recall_score(datasets()$ytest, model()$ypred),
+      "Precision" = metrics$precision_score(datasets()$ytest, model()$ypred)
     )
   }, colnames = FALSE, rownames = TRUE)
 
@@ -521,14 +559,13 @@ server <- function(input, output) {
     if (input$predict_proba) {
       data <- cbind(data, yproba = model()$yproba)
     }
-    return(datatable(data,selection = 'single'))
-  },
-  options = list(
-    searching = FALSE,
-    scrollCollapse = TRUE,
-    scrollY = "400px",
-    footer = TRUE
-  ))
+    return(datatable(data, selection = "single", options = list(
+      searching = FALSE,
+      scrollCollapse = TRUE,
+      scrollY = "300px",
+      footer = TRUE
+    )))
+  })
 
   output$downloadModel <- downloadHandler(
     filename = function() {
@@ -539,22 +576,25 @@ server <- function(input, output) {
       saveRDS(model, file)
     }
   )
-  
   # Display clicked row information
   observeEvent(input$predictTable_rows_selected, {
+
     selected_row_index <- input$predictTable_rows_selected
-    data = datasets()$Xtest
-    
+
+    output$clicked_row <- renderText("FALSE")
+    outputOptions(output, "clicked_row", suspendWhenHidden = FALSE)
+
     if (length(selected_row_index) > 0) {
-      clicked_row_values <- data[selected_row_index,]
-      
+      output$clicked_row <- renderText("TRUE")
+      outputOptions(output, "clicked_row", suspendWhenHidden = FALSE)
+
       output$predictedProbasHist <- renderPlotly({
-        probas = round(model()$model$predict_proba(data)[selected_row_index,],2)
-        plot = plot_ly(x = names(probas), y = unname(probas), type = 'bar')
-        plot = layout(plot,
-          title="Distribution of class probas",
-          xaxis=list(title = "Class"),
-          yaxis=list(title = "probas")
+        probas <- model()$yproba[selected_row_index, ]
+        plot <- plot_ly(x = names(probas), y = unname(probas), type = "bar")
+        plot <- layout(plot,
+          title = "Distribution of class probas",
+          xaxis = list(title = "Class"),
+          yaxis = list(title = "probas")
         )
         return(plot)
       })
